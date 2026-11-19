@@ -1,0 +1,20 @@
+# Python 3.10-3.12 gerekir (numpy 1.26 / Pillow 10.4'un 3.13+ icin hazir paketi yok)
+# Eski/orta güçteki PC'lerde ve PyInstaller ile en sorunsuz çalışan, denenmiş sürümler
+pymupdf==1.24.14
+Pillow==10.4.0
+opencv-python-headless==4.10.0.84
+numpy==1.26.4
+requests>=2.31
+fonttools>=4.40
+keyring>=24.0
+pytesseract>=0.3.10
+# Yerel modeller (RapidOCR / LaMa) icin. rapidocr_onnxruntime ayrica --no-deps ile kurulur
+# (kendi bagimliligi opencv-python, yukaridaki opencv-python-headless ile cakisir).
+onnxruntime>=1.17,<1.23
+pyclipper>=1.2.0
+shapely>=1.7.1,!=2.0.4
+six>=1.15.0
+PyYAML>=5.4
+tqdm>=4.0
+# Koyu, modern arayuz temasi (Windows 11 / Sun Valley)
+sv-ttk>=2.6

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Derleme çıktıları
+build/
+dist/
+*.exe
+
+# Modeller (büyük dosyalar)
+models/
+*.onnx
+*.pt
+*.pth
+
+# Kullanıcı verisi, ayarlar ve gizli anahtarlar
+*.log
+.env
+settings.json
+*.key
+
+# Test çıktıları
+*.pdf
+*.png
+*.jpg
+*.cbz
+hiz_testi/
