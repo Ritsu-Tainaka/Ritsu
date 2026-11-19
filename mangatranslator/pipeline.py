@@ -59,6 +59,18 @@ def snap_regions(img, regions):
         r["box"], r["clean_box"] = nb, list(nb)
 
 
+def fallback_note(a):
+    """render_page seçili silme modelini kullanamadıysa günlüğe yazılacak kısa uyarı (yoksa boş)."""
+    fb = a.pop("inpaint_fallback", None) if isinstance(a, dict) else None
+    if not fb:
+        return ""
+    from . import models
+    name = models.inpaint_label(fb.get("kind", "")).split(" (")[0]
+    where = f"{fb['n']} yerde" if fb.get("n") else "bu sayfada"
+    why = f" Sebep: {fb['err']}" if fb.get("err") else ""
+    return f"Uyarı: {name} {where} çalışmadı, o kısımlar OpenCV ile silindi.{why}"
+
+
 class Pipeline:
     def __init__(self, project, cfg, api_key, stop, log=print, progress=lambda *a: None, client=None):
         self.p, self.cfg, self.stop, self.log, self.progress = project, cfg, stop, log, progress
@@ -161,6 +173,9 @@ class Pipeline:
                     a = json.loads(js.read_text(encoding="utf-8"))
                     img = source.load_page(ch, i, self.cfg.get("render_long_side", 2200))
                     out = render_page(img, a, self.cfg, self.stop)
+                    note = fallback_note(a)
+                    if note:
+                        self.log(f"[{label}] Sayfa {i + 1}: {note}")
                     save_json(js, a)
                     save_jpg(wd / f"p{i:04d}.jpg", out, int(self.cfg.get("jpeg_quality", 90)))
                     n_done += 1
@@ -393,9 +408,12 @@ class Pipeline:
                 img = source.load_page(ch, i, cfg.get("render_long_side", 2200))
                 t0 = time.time()
                 out = render_page(img, a, cfg, self.stop)
+                note = fallback_note(a)
                 save_json(js(i), a)
                 save_jpg(jp(i), out, int(cfg.get("jpeg_quality", 90)))
                 self.log(f"  • Sayfa {i + 1}/{n} çizildi ({time.time() - t0:.0f} sn).")
+                if note:
+                    self.log(f"  ! Sayfa {i + 1}: {note}")
             except Stopped:
                 raise
             except Exception as e:

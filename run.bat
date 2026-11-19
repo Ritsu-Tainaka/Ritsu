@@ -27,5 +27,10 @@ if not exist ".venv\kurulum_v3.txt" (
   ".venv\Scripts\python.exe" -m pip install --no-deps "rapidocr_onnxruntime==1.4.4" || echo [UYARI] RapidOCR kurulamadi; Ekonomik modda Tesseract kullanilacak.
   echo ok> ".venv\kurulum_v3.txt"
 )
+REM v4: yeni RapidOCR (3.x, PP-OCRv6) - manga yazilarini cok daha dogru okur. Ilk acilista bir kez kurulur;
+REM modelleri ilk OCR'da bir kez indirilir. Kurulamazsa eski RapidOCR ile devam edilir.
+if not exist ".venv\kurulum_v4.txt" (
+  ".venv\Scripts\python.exe" -m pip install "rapidocr==3.10.0" && echo ok> ".venv\kurulum_v4.txt" || echo [UYARI] Yeni RapidOCR kurulamadi; eski surum kullanilacak.
+)
 ".venv\Scripts\python.exe" main.py
 pause

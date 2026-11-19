@@ -2,7 +2,7 @@
 import cv2
 import numpy as np
 
-VERSION = 17
+VERSION = 18
 
 
 def _shape(comp, x, y, w, h, boxes):
@@ -54,11 +54,22 @@ def _split_leaky(comp, k, boxes, x, y):
     filled = np.zeros_like(comp)
     cv2.drawContours(filled, cnts, -1, 1, -1)
     m = comp.copy()
+    # Yalnızca kutunun içinde kalan koyu parçalar (harfler) doldurulur. Balon çizgisi gibi kutunun dışına
+    # uzanan çizgiler doldurulmaz: balon kenarına taşan bir yazı ("But...") kenar çizgisini köprüleyip
+    # balonu dışarıdaki zemine bağlamasın.
+    holes = ((filled > 0) & (comp == 0)).astype(np.uint8)
+    nh, hl, hs, _ = cv2.connectedComponentsWithStats(holes, connectivity=8)
     for bx0, by0, bx1, by1 in boxes:
         lx0, ly0 = int(max(0, bx0 - x - 2)), int(max(0, by0 - y - 2))
         lx1, ly1 = int(min(w, bx1 - x + 2)), int(min(h, by1 - y + 2))
         if lx1 > lx0 and ly1 > ly0:
-            m[ly0:ly1, lx0:lx1] |= filled[ly0:ly1, lx0:lx1]
+            pad = 0.3 * (ly1 - ly0)
+            sub = hl[ly0:ly1, lx0:lx1]
+            ok = np.zeros(nh, bool)
+            for j in np.unique(sub[sub > 0]):
+                hx, hy, hw, hh = hs[j, :4]
+                ok[j] = (hx >= lx0 - pad and hy >= ly0 - pad and hx + hw <= lx1 + pad and hy + hh <= ly1 + pad)
+            m[ly0:ly1, lx0:lx1] |= ok[sub].astype(np.uint8)
     bx = (m > comp).astype(np.uint8)
     for bx0, by0, bx1, by1 in boxes:
         lx0, ly0 = int(max(0, bx0 - x - 2)), int(max(0, by0 - y - 2))
@@ -187,6 +198,56 @@ def _find_hatched(rgb, boxes, found, white_thr=200):
             b["hatched"] = True
             out.append(b)
     return out
+
+
+def local_bubble(rgb, line_boxes, white_thr=200):
+    """Yazının içinde durduğu beyaz alan dışarıdaki beyaz zemine geniş bir açıklıktan bağlıysa
+    (balonun kenarına taşan bir kelime, açık kuyruk) sayfa genelinde balon bulunamaz. Burada yalnızca
+    bu yazının çevresine bakılır: beyaz alan satır boyuna göre giderek daha kalın bir açmayla bölünür,
+    yazıyı tamamen içine alan düzgün (oval/yuvarlak) bir parça çıkarsa balon odur.
+    line_boxes: piksel (x0, y0, x1, y1) satır kutuları. Dönüş: piksel poligon ya da None."""
+    g = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    H, W = g.shape
+    x0 = min(b[0] for b in line_boxes); y0 = min(b[1] for b in line_boxes)
+    x1 = max(b[2] for b in line_boxes); y1 = max(b[3] for b in line_boxes)
+    lh = float(np.median([b[3] - b[1] for b in line_boxes]))
+    bw, bh = x1 - x0, y1 - y0
+    rx0, ry0 = int(max(0, x0 - 1.5 * bw)), int(max(0, y0 - 1.5 * bh))
+    rx1, ry1 = int(min(W, x1 + 1.5 * bw)), int(min(H, y1 + 1.5 * bh))
+    sub = g[ry0:ry1, rx0:rx1]
+    white = 1 - cv2.dilate((sub <= white_thr).astype(np.uint8), np.ones((3, 3), np.uint8))
+    m = white.copy()
+    for bx0, by0, bx1, by1 in line_boxes:                 # satırlar dolu sayılır
+        m[int(by0 - ry0):int(by1 - ry0) + 1, int(bx0 - rx0):int(bx1 - rx0) + 1] = 1
+    tb = np.zeros_like(m)
+    tb[int(y0 - ry0):int(y1 - ry0) + 1, int(x0 - rx0):int(x1 - rx0) + 1] = 1
+    tarea = float(tb.sum())
+    for f in (0.6, 0.9, 1.2, 1.6):
+        k = max(7, int(f * lh)) | 1
+        op = cv2.morphologyEx(m, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+        n, lab = cv2.connectedComponents(op, connectivity=4)
+        if n < 2:
+            continue
+        ov = np.bincount(lab[tb > 0].ravel(), minlength=n)
+        ov[0] = 0
+        j = int(ov.argmax())
+        pc = (lab == j).astype(np.uint8)
+        # açmanın kırptığı kenarlar geri gelsin (yalnızca bu parçaya bağlı beyaz)
+        pc = cv2.dilate(pc, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))) & m
+        if pc[0, :].any() or pc[-1, :].any() or pc[:, 0].any() or pc[:, -1].any():
+            continue                                          # hâlâ dışarı sızıyor
+        cnts, _ = cv2.findContours(pc, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        c = max(cnts, key=cv2.contourArea)
+        fill = np.zeros_like(pc)
+        cv2.drawContours(fill, [c], -1, 1, -1)
+        fa = float(fill.sum())
+        hull = cv2.contourArea(cv2.convexHull(c))
+        if not hull or fa / hull < 0.85 or fa > 8 * tarea:
+            continue
+        if float((fill & tb).sum()) < 0.9 * tarea:
+            continue
+        return cv2.approxPolyDP(c, 1.2, True).reshape(-1, 2) + [rx0, ry0]
+    return None
 
 
 def find(rgb, white_thr=200, boxes=()):

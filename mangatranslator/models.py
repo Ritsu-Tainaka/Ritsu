@@ -13,6 +13,21 @@ INPAINT_MODELS = {
         "sha256": None,
         "file": MODEL_DIR / "lama_manga.onnx",
     },
+    # AOT (manga-image-translator'ın manga ile eğittiği model) ve MI-GAN, uygulamanın giriş düzenine
+    # (image 0..1, mask 1 = silinecek, çıkış 0..1; 512x512) çevrilmiş ONNX dosyaları. İndirme adresi yok:
+    # dosyalar models klasörüne doğrudan konur.
+    "aot": {
+        "label": "AOT (manga için eğitilmiş, LaMa'dan ~2,5 kat hızlı, ~23 MB) — önerilen",
+        "url": None,
+        "sha256": None,
+        "file": MODEL_DIR / "aot_manga.onnx",
+    },
+    "migan": {
+        "label": "MI-GAN (en hızlı, koyu çizgili zeminde beyaz leke bırakabilir, ~13 MB)",
+        "url": None,
+        "sha256": None,
+        "file": MODEL_DIR / "migan.onnx",
+    },
 }
 
 TEXT_DET = {
@@ -59,12 +74,14 @@ def _ort_session(path):
 
 # ---------------------------------------------------------------- RapidOCR
 def _make_rapid():
+    # Yeni RapidOCR (3.x, PP-OCRv6) kuruluysa o kullanılır: manga sayfalarında kelimeleri çok daha az
+    # yanlış okur (bitişik/yanlış kelime oranı ~%9 yerine ~%3). Yoksa eski rapidocr_onnxruntime.
     try:
-        from rapidocr_onnxruntime import RapidOCR
+        from rapidocr import RapidOCR
         return RapidOCR()
     except ImportError:
         pass
-    from rapidocr import RapidOCR
+    from rapidocr_onnxruntime import RapidOCR
     return RapidOCR()
 
 
@@ -211,8 +228,8 @@ def inpaint_ready(kind="manga_lama"):
 
 def download_inpaint(kind="manga_lama", progress=None, stop=None):
     spec = INPAINT_MODELS.get(kind)
-    if not spec:
-        raise ValueError(f"Bu model otomatik indirilmez: {kind}")
+    if not spec or not spec.get("url"):
+        raise ValueError(f"Bu model otomatik indirilmez; dosyayı şu konuma koyun: {spec['file'] if spec else kind}")
     out = _download(spec, progress, stop)
     with _lock:
         _inp_sessions.pop(kind, None)
@@ -338,7 +355,7 @@ _line_lock = threading.Lock()
 def _line_model_path():
     import importlib.util
     from pathlib import Path
-    for pkg in ("rapidocr_onnxruntime", "rapidocr"):
+    for pkg in ("rapidocr", "rapidocr_onnxruntime"):
         try:
             spec = importlib.util.find_spec(pkg)
         except Exception:

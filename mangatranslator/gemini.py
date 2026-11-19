@@ -44,7 +44,7 @@ Rules:
 - Keep every id. The OCR text may contain mistakes (wrong letters, split/broken words, punctuation glitches): reconstruct the intended English text from context before translating.
 - Translate into natural, fluent Turkish matching each character's personality, register (sen/siz), and emotional tone across the scene. Keep it concise so it fits in a bubble.
 - If an item is not real dialogue (noise, watermark, page number, scanlator credit), return "" for its tr.
-- Items with "free": true are words drawn directly on the artwork (outside speech bubbles). Translate them if they are dialogue, thoughts, narration or a short exclamation a character says (e.g. "HE'S", "Whee!", "I remember him..."); a sentence may continue across neighbouring items, keep each part in its own item. If such an item is only a pure sound effect / onomatopoeia (e.g. BAM, THUD, SQUIRM, FWOOSH) return "" for it.
+- Items with "free": true are words drawn directly on the artwork (outside speech bubbles). Translate them if they are dialogue, thoughts, narration or a short exclamation a character says (e.g. "HE'S", "Whee!", "I remember him..."); a sentence may continue across neighbouring items, keep each part in its own item. Text shown on a phone or computer screen (chat messages, notifications, search history, e.g. "Meet you at the gate.", "exhibit at Hakata Station"), notes, letters and captions must ALWAYS be translated too, even when the OCR glued words together or cut a word off; never return "" for them. Only if an item is a pure sound effect / onomatopoeia (e.g. BAM, THUD, SQUIRM, FWOOSH, BUSTLE) return "" for it.
 - Use correct Turkish characters (ç ğ ı İ ö ş ü). No explanations.{style}{glossary}{context}
 INPUT:
 {payload}"""
@@ -177,8 +177,8 @@ class Gemini:
         if not self.key:
             raise GeminiError("API anahtarı girilmemiş (Ayarlar).", permanent=True)
         url = f"{API}/models/{self.model}:generateContent"
-        timeouts = 0
-        for attempt in range(7):
+        timeouts, busy = 0, 0
+        for attempt in range(16):          # kısa beklemelerle ~2,5 dk boyunca denenir
             self._sleep(max(0.0, self._last + self.min_gap - time.time()))
             self._last = time.time()
             try:
@@ -210,9 +210,16 @@ class Gemini:
                 raise GeminiError("Günlük ücretsiz kota doldu. Kota Pasifik saatiyle gece yarısı sıfırlanır "
                                   "(Türkiye'de yaklaşık 10:00-11:00). Kalan sayfalar yarın kaldığı yerden devam eder; "
                                   "ya da Ayarlar'dan daha yüksek günlük kotalı (Flash-Lite / 3.8 Flash) bir model seçin.", permanent=True)
-            if r.status_code in (429, 500, 502, 503, 504):
+            if r.status_code in (500, 502, 503, 504):
+                # Sunucu anlık yoğun: genelde birkaç saniyede geçer; ilk denemede 5 sn, sonra hep 10 sn beklenir.
+                wait = (5.0 if busy == 0 else 10.0) + random.random()
+                busy += 1
+                self.log(f"API {r.status_code} (Google sunucusu yoğun), {wait:.0f} sn sonra tekrar deneniyor...")
+                self._sleep(wait)
+                continue
+            if r.status_code == 429:
                 wait = _retry_wait(r, attempt)
-                self.log(f"API {r.status_code} (hız sınırı/yoğunluk), {wait:.0f} sn bekleniyor...")
+                self.log(f"API 429 (hız sınırı), {wait:.0f} sn bekleniyor...")
                 self._sleep(wait)
                 continue
             raise GeminiError(f"API hatası {r.status_code}: {msg}")
