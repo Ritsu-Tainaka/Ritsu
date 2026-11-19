@@ -261,16 +261,29 @@ def _is_bogus_bubble(poly):
     return n >= 300 or sol < 0.80
 
 
+def _is_toned_area(gray, poly, ws):
+    """Balon sanılan alanın içi (yazılar dışında) beyaz değil de tram/gri tonluysa True."""
+    H, W = gray.shape
+    m = np.zeros((H, W), np.uint8)
+    cv2.fillPoly(m, [np.asarray(poly).astype(np.int32)], 1)
+    m = cv2.erode(m, np.ones((11, 11), np.uint8))
+    for w in ws:
+        m[int(w["y0"]):int(w["y1"]) + 1, int(w["x0"]):int(w["x1"]) + 1] = 0
+    v = gray[m > 0]
+    return v.size >= 500 and float((v < 235).mean()) >= 0.08
+
+
 def _attach_leftovers(regs, leftovers, W, H, med_h=0):
     """Tek başına atlanan parçaları ("EVEN", "I") hemen bitişiğindeki balon dışı yazıya ekler:
     "EVEN" + "THOUGH IT'S AUTUMN..." tek cümle olarak çevrilir ve silinir."""
     for (x0, y0, x1, y1, text) in sorted(leftovers, key=lambda t: t[1]):
         lh = y1 - y0
-        if med_h and lh > 1.8 * med_h:                 # büyük başlık/efekt ("Contents"): cümleye ait değil
-            continue
         best, bgap = None, 1e9
         for r in regs:
             if r.get("bubble") is not None:
+                continue
+            tl = r.get("_lh") or 0
+            if tl and (lh > 1.8 * tl or tl > 1.8 * lh):  # boyu çok farklı (büyük "Contents" başlığı): cümleye ait değil
                 continue
             ry0, rx0, ry1, rx1 = r["box"][0] * H / 1000, r["box"][1] * W / 1000, r["box"][2] * H / 1000, r["box"][3] * W / 1000
             ov = min(x1, rx1) - max(x0, rx0)
@@ -421,6 +434,22 @@ def _lines(words):
     return lines
 
 
+def _case_clash(a, b):
+    """Biri tamamen büyük harfli tek kelime (efekt: "SQUIRM"), öteki küçük harfli cümleyse aynı yazıya ait değildir."""
+    def style(t):
+        lt = [c for c in t if c.isalpha()]
+        if len(lt) < 4:
+            return None
+        low = sum(c.islower() for c in lt) / len(lt)
+        if low >= 0.5 and len(t.split()) >= 2 and len(lt) >= 8:   # gerçek küçük harfli cümle (OCR'ın "That?" hatası değil)
+            return "lower"
+        if low == 0 and len(t.split()) == 1:
+            return "caps-word"
+        return None
+    sa, sb = style(a.get("text", "")), style(b.get("text", ""))
+    return {sa, sb} == {"lower", "caps-word"}
+
+
 def _group(lines):
     n = len(lines)
     par = list(range(n))
@@ -438,7 +467,8 @@ def _group(lines):
             gap = max(a["y0"], b["y0"]) - min(a["y1"], b["y1"])
             ox = min(a["x1"], b["x1"]) - max(a["x0"], b["x0"])
             wmin = min(a["x1"] - a["x0"], b["x1"] - b["x0"])
-            if gap < 0.9 * lh and ox > 0.25 * wmin and 0.6 < (a["y1"] - a["y0"]) / (b["y1"] - b["y0"]) < 1.7:
+            if (gap < 0.9 * lh and ox > 0.25 * wmin and 0.6 < (a["y1"] - a["y0"]) / (b["y1"] - b["y0"]) < 1.7
+                    and not _case_clash(a, b)):
                 par[find(i)] = find(j)
     groups = {}
     for i in range(n):
@@ -560,7 +590,7 @@ def _bubble_groups(lns):
             a, b = lns[i], lns[j]
             vgap = max(a["y0"], b["y0"]) - min(a["y1"], b["y1"])
             hgap = max(a["x0"], b["x0"]) - min(a["x1"], b["x1"])
-            if (vgap <= 1.0 * mh and hgap < 0) or (vgap < -0.4 * mh and hgap <= 0.8 * mh):
+            if ((vgap <= 1.0 * mh and hgap < 0) or (vgap < -0.4 * mh and hgap <= 0.8 * mh)) and not _case_clash(a, b):
                 par[find(i)] = find(j)
     groups = {}
     for i in range(n):
@@ -664,6 +694,7 @@ def detect(img, tesseract_path="", rtl=True, engine="auto"):
         page_med = statistics.median(w["y1"] - w["y0"] for w in words) if words else 0
         rest = list(words)
         bubs = bubbles.find(rgb, boxes=[(w["x0"], w["y0"], w["x1"], w["y1"]) for w in words])
+        gray_full = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
         owner, orphan = {}, set()
         bogus = {bi for bi, b in enumerate(bubs) if _is_bogus_bubble(b["poly"])}
         polys = [b["poly"].astype(np.int32) for b in bubs]
@@ -694,6 +725,11 @@ def detect(img, tesseract_path="", rtl=True, engine="auto"):
             ws = [w for w in words if owner.get(id(w)) == bi]
             normal_h = [w["y1"] - w["y0"] for w in ws if (w["y1"] - w["y0"]) <= SFX_H * page_med]
             if not normal_h:
+                # Hepsi iri yazı ve "balon" tramlı bir zemin ("EVEN THOUGH IT'S AUTUMN..." başlığı): bu bir
+                # konuşma balonu değil, açık tonlu panel. Yazı serbest stilize metin olarak ele alınsın.
+                if _is_toned_area(gray_full, bubs[bi]["poly"], ws):
+                    for w in ws:
+                        owner.pop(id(w), None)
                 continue
             for w in ws:
                 if (w["y1"] - w["y0"]) > SFX_H * page_med and not re.search(r"[!?]", w["t"]):
@@ -715,7 +751,31 @@ def detect(img, tesseract_path="", rtl=True, engine="auto"):
             fake = bi in bogus                    # çizim alanı: balon gibi davranma, yazıyı serbest metin say
             if fake:
                 cells = [None] * len(groups)
+                # Gerçek bir balon dışarıya geniş bir açıklıktan bağlandığı için bozuk görünmüş olabilir
+                # (kenarına taşan "But..." yazısı): yazının çevresinde yerel olarak balon aranır.
+                ng, ngb, ncell = [], [], []
+                for g in groups:
+                    try:
+                        lp = bubbles.local_bubble(rgb, [(l["x0"], l["y0"], l["x1"], l["y1"]) for l in g])
+                    except Exception:
+                        lp = None
+                    if lp is None:
+                        ng.append(g); ngb.append(None); ncell.append(None)
+                        continue
+                    lpi = lp.astype(np.int32)
+                    inn = [l for l in g if cv2.pointPolygonTest(
+                        lpi, (float((l["x0"] + l["x1"]) / 2), float((l["y0"] + l["y1"]) / 2)), False) >= 0]
+                    out = [l for l in g if l not in inn]
+                    if inn:
+                        ng.append(inn); ngb.append(lp); ncell.append(lp)
+                    if out:
+                        ng.append(out); ngb.append(None); ncell.append(None)
+                groups = ng
+                gboxes = [(min(l["x0"] for l in g), min(l["y0"] for l in g), max(l["x1"] for l in g), max(l["y1"] for l in g))
+                          for g in groups]
+                cells = ncell
             for g, (x0, y0, x1, y1), cell in zip(groups, gboxes, cells):
+                real = cell is not None and fake          # yerel olarak bulunmuş gerçek balon
                 orp = [l for l in g if id(l["ws"][0]) in orphan]
                 if orp and cell is not None:
                     cell = _extend_poly(cell, [(l["x0"], l["y0"], l["x1"], l["y1"]) for l in orp], (H, W),
@@ -732,8 +792,9 @@ def detect(img, tesseract_path="", rtl=True, engine="auto"):
                     box=[int(y0 / H * 1000), int(x0 / W * 1000), int(y1 / H * 1000) + 1, int(x1 / W * 1000) + 1],
                     kind="speech", font="comic", slant=False, caps=sum(c.isupper() for c in letters) / len(letters) > 0.8,
                     color="black", src=text, tr="", skip=False, size_mul=1.0,
-                    bubble=None if fake else bubbles.to_norm(cell if cell is not None else b["poly"], W, H),
-                    **({"free": True} if fake else {})))
+                    bubble=bubbles.to_norm(cell, W, H) if real else (
+                        None if fake else bubbles.to_norm(cell if cell is not None else b["poly"], W, H)),
+                    **({"free": True} if fake and not real else {})))
 
         words, stylized, leftovers = _split_sfx(rest, page_med)
         for g in stylized:
@@ -745,7 +806,8 @@ def detect(img, tesseract_path="", rtl=True, engine="auto"):
                 box=[int(y0 / H * 1000), int(x0 / W * 1000), int(y1 / H * 1000) + 1, int(x1 / W * 1000) + 1],
                 kind="speech", font="comic", slant=False,
                 caps=sum(c.isupper() for c in letters) / max(1, len(letters)) > 0.8,
-                color="black", src=text, tr="", skip=False, size_mul=1.0, bubble=None, free=True))
+                color="black", src=text, tr="", skip=False, size_mul=1.0, bubble=None, free=True,
+                _lh=statistics.median(l["y1"] - l["y0"] for l in g)))
     else:
         pt = _setup(tesseract_path)
         for b in bubbles.find(rgb):
@@ -825,9 +887,12 @@ def detect(img, tesseract_path="", rtl=True, engine="auto"):
             box=[int(y0 / H * 1000), int(x0 / W * 1000), int(y1 / H * 1000) + 1, int(x1 / W * 1000) + 1],
             kind="shout" if shout else "speech", font="shout" if shout else "comic",
             slant=False, caps=bool(caps), color="black", src=_join(l["text"] for l in g), tr="", skip=False, size_mul=1.0,
-            bubble=None, free=bool(comps is not None and why in ("stilize", "kısa-replik", "düz-zemin", "ekran-yazısı"))))
+            bubble=None, free=bool(comps is not None and why in ("stilize", "kısa-replik", "düz-zemin", "ekran-yazısı")),
+            _lh=lh))
 
     _attach_leftovers(regs, leftovers, W, H, med_h)
+    for r in regs:
+        r.pop("_lh", None)
     regs = [r for r in regs if not any(re.search(p, r["src"], re.I) for p in IGNORE_TEXT)]
     regs = [r for r in regs if not (r.get("bubble") is None and (_looks_like_sign(r["src"]) or _is_bare_title(r["src"])))]
     regs = _dedup_regions(regs)

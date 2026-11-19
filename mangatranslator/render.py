@@ -84,6 +84,9 @@ def _needs_model(arr, org, m):
     return float(gray[ring].std()) >= 14
 
 
+_LOAD_WARNED = set()
+
+
 def _clean_spill(arr, r, bmask, inpaint):
     """Balonun dışına taşan yazı parçasını (balon kenarının ötesindeki son kelime, ör. "HER.") siler.
     Taşan harfler balonun beyazına bağlı beyaz bir konturun içinde durur: beyaz alan harf kalınlığı
@@ -205,6 +208,13 @@ def render_page(img, analysis, cfg, stop=None):
     if inp_kind != "opencv":
         from . import models
         has_ml_inp = bool(models.get_inpaint_session(inp_kind))
+    # Seçili silme modeli yüklenemez ya da bir yerde hata verirse OpenCV kullanılır; kullanıcıya
+    # bildirmek için sayfa sonucuna not düşülür (pipeline günlüğe yazar).
+    analysis.pop("inpaint_fallback", None)
+    fb = dict(kind=inp_kind, n=0, err="")
+    if inp_kind != "opencv" and not has_ml_inp and inp_kind not in _LOAD_WARNED:
+        _LOAD_WARNED.add(inp_kind)                 # yüklenemedi uyarısı her sayfada tekrarlanmasın
+        fb["err"] = models.inpaint_status(inp_kind)
 
     def check():
         if stop is not None and stop.is_set():
@@ -300,13 +310,19 @@ def render_page(img, analysis, cfg, stop=None):
             if _needs_model(arr, org, m):
                 try:
                     ok = models.run_inpaint(arr, org, m, kind=inp_kind)
-                except Exception:
+                except Exception as e:
                     ok = False
+                    fb["err"] = fb["err"] or f"{e.__class__.__name__}: {e}"
+                if not ok:
+                    fb["n"] += 1
+                    fb["err"] = fb["err"] or models.inpaint_status(inp_kind)
             if not ok:                                    # model çalışmazsa OpenCV ile sil
                 x0, y0 = org
                 roi = arr[y0:y0 + m.shape[0], x0:x0 + m.shape[1]]
                 roi[:] = cv2.inpaint(np.ascontiguousarray(roi), m.astype(np.uint8), 4, cv2.INPAINT_TELEA)
 
+    if fb["err"] or fb["n"]:
+        analysis["inpaint_fallback"] = fb
     out = Image.fromarray(arr)
     for r in regs:
         check()

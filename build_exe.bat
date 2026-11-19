@@ -34,6 +34,9 @@ echo [2/4] Paketler kuruluyor/guncelleniyor...
 ".venv\Scripts\python.exe" -m pip install --upgrade pip >nul
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt pyinstaller || ( echo [HATA] Paket kurulumu basarisiz & pause & exit /b 1 )
 ".venv\Scripts\python.exe" -m pip install --no-deps "rapidocr_onnxruntime==1.4.4" || echo [UYARI] RapidOCR kurulamadi; EXE Tesseract ile calisacak.
+".venv\Scripts\python.exe" -m pip install "rapidocr==3.10.0" || echo [UYARI] Yeni RapidOCR kurulamadi; EXE eski surumle calisacak.
+REM Yeni RapidOCR modelleri EXE'ye girsin diye derlemeden once bir kez indirilir
+".venv\Scripts\python.exe" -c "from rapidocr import RapidOCR; RapidOCR()" >nul 2>nul
 
 REM 3) Eski derlemeyi temizle
 echo [3/4] Eski derleme temizleniyor...
@@ -49,6 +52,7 @@ echo [4/4] EXE derleniyor (birkac dakika surebilir)...
   --hidden-import keyring.backends.Windows ^
   --hidden-import pymupdf ^
   --collect-all rapidocr_onnxruntime ^
+  --collect-all rapidocr ^
   --collect-data sv_ttk ^
   --exclude-module networkx ^
   --exclude-module pymupdf4llm ^

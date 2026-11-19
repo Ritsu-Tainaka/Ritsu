@@ -263,6 +263,11 @@ def snap_box(img, box, bubble_mask=None):
     new_a = (nx1 - nx0) * (ny1 - ny0)
     if new_a < 0.15 * old_a or new_a > 2.2 * old_a:               # şüpheli sonuç: dokunma
         return list(box)
+    # Yeni kutu yazının ortasını kaçırıyorsa (tramlı zeminde beyaz konturlu yazıda zeminin noktaları
+    # "yazı" sanılıp yalnızca bir şerit seçilir) yanlış yere oturmuştur: dokunma.
+    ocx, ocy = (bx0 + bx1) / 2, (by0 + by1) / 2
+    if not (nx0 <= ocx <= nx1 and ny0 <= ocy <= ny1) or (ny1 - ny0) < 0.4 * (by1 - by0):
+        return list(box)
     out = [int(ny0 * 1000 / H), int(nx0 * 1000 / W), int(np.ceil(ny1 * 1000 / H)), int(np.ceil(nx1 * 1000 / W))]
     out = [max(0, min(1000, v)) for v in out]
     if out[2] - out[0] < 6 or out[3] - out[1] < 6:
