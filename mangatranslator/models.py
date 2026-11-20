@@ -73,16 +73,52 @@ def _ort_session(path):
 
 
 # ---------------------------------------------------------------- RapidOCR
+def _pkg_ver(name):
+    try:
+        from importlib.metadata import version
+        return version(name)
+    except Exception:
+        return "?"
+
+
+_rapid_kind = None      # yüklenen RapidOCR: "yeni sürüm 3.10.0, PP-OCRv6" / "eski sürüm 1.4.4, PP-OCRv4"
+
+
 def _make_rapid():
     # Yeni RapidOCR (3.x, PP-OCRv6) kuruluysa o kullanılır: manga sayfalarında kelimeleri çok daha az
-    # yanlış okur (bitişik/yanlış kelime oranı ~%9 yerine ~%3). Yoksa eski rapidocr_onnxruntime.
+    # yanlış okur (bitişik/yanlış kelime oranı ~%9 yerine ~%3). Yoksa ya da açılamazsa eski rapidocr_onnxruntime.
+    global _rapid_kind
+    new_err = None
     try:
         from rapidocr import RapidOCR
-        return RapidOCR()
+        eng = RapidOCR()
+        _rapid_kind = f"yeni sürüm {_pkg_ver('rapidocr')}, PP-OCRv6"
+        return eng
     except ImportError:
         pass
+    except Exception as e:
+        new_err = f"{e.__class__.__name__}: {e}"
     from rapidocr_onnxruntime import RapidOCR
-    return RapidOCR()
+    eng = RapidOCR()
+    _rapid_kind = f"eski sürüm {_pkg_ver('rapidocr_onnxruntime')}, PP-OCRv4"
+    if new_err:
+        _rapid_kind += f"; yeni sürüm açılamadı: {new_err}"
+    return eng
+
+
+def rapid_kind():
+    """Hangi RapidOCR'ın kullanıldığını (yüklendiyse) ya da kullanılacağını (yüklemeden) söyler."""
+    if _rapid_kind:
+        return _rapid_kind
+    import importlib.util
+    try:
+        if importlib.util.find_spec("rapidocr") is not None:
+            return f"yeni sürüm {_pkg_ver('rapidocr')}, PP-OCRv6"
+        if importlib.util.find_spec("rapidocr_onnxruntime") is not None:
+            return f"eski sürüm {_pkg_ver('rapidocr_onnxruntime')}, PP-OCRv4"
+    except Exception:
+        pass
+    return ""
 
 
 def rapid():
@@ -112,10 +148,10 @@ def rapid_status(load=False):
     if load:
         rapid()
     if _rapid:
-        return "hazır"
+        return f"hazır ({rapid_kind()})"
     if _rapid is False:
         return f"kullanılamıyor ({_rapid_err or 'kurulu değil'})"
-    return "kurulu (ilk OCR'da yüklenecek)" if rapid_installed() else "kurulu değil"
+    return f"kurulu, {rapid_kind()} (ilk OCR'da yüklenecek)" if rapid_installed() else "kurulu değil"
 
 
 def _parse_rapid(res):
