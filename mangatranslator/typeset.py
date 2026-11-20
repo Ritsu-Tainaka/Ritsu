@@ -331,11 +331,28 @@ def fit_zone(text, path, weight, zone, cy, max_size, min_size):
             else:
                 hi = mid - 1
         return res
-    plain = best(False)
-    if plain and plain[1] >= 0.85 * max_size:
+    def centred(res, hyph):
+        # En büyük boy yalnızca balonun bir ucuna kaydırılarak sığıyorsa (ör. balonun üstü dar), biraz
+        # (en çok ~%12) küçük boyla balonun ortasına dizilebiliyorsa o seçilir.
+        if not res:
+            return res
+        f, size, pl = res
+        def off(p, sz):
+            return abs((p[0][2] + p[-1][2] + sz) / 2 - cy)
+        if off(pl, size) <= 0.6 * size:
+            return res
+        for s2 in range(size - 1, max(int(min_size), int(size * 0.88)) - 1, -1):
+            f2 = fonts.load(path, s2, weight)
+            p2 = _try_layout(text, f2, s2, zone, cy, hyph)
+            if p2 and off(p2, s2) <= 0.6 * s2:
+                return f2, s2, p2
+        return res
+    raw = best(False)
+    plain = centred(raw, False)
+    if plain and raw[1] >= 0.85 * max_size:
         return plain
-    hy = best(True)
-    if hy and (not plain or hy[1] >= plain[1] * 1.25):
+    hy = centred(best(True), True)
+    if hy and (not plain or hy[1] >= raw[1] * 1.25):    # heceleme yalnızca belirgin büyük yazı için
         return hy
     return plain
 
@@ -483,10 +500,18 @@ def _zone_layout(img, r, meas, box, text, path, weight, bmask):
     ys, xs = np.nonzero(zone)
     zw, zh = xs.max() - xs.min() + 1, ys.max() - ys.min() + 1
     max_size, min_readable = _size_limits(r, meas, H, zw * 0.9, zh * 0.9)
+    # Düzgün kenarlı (kapalı) balonda yazı balonun kendi şeklinin ortasına dizilir: yamuk/eğik balonda
+    # satırlar balonun ağırlık merkezine göre ortalanır. Kenarı dikenli/çizgili/açık balonda (bulunan
+    # şekil güvenilmez) eskisi gibi orijinal yazının yerine yakın kalır ve oval sınır da denenir.
+    regular = _bubble_solidity(bmask) >= 0.9
     bcy = (box[1] + box[3]) / 2
-    cy = 0.4 * float(ys.mean()) + 0.6 * min(max(bcy, ys.min()), ys.max())
+    if regular:                                       # balonun en dolgun kısmına ağırlık veren orta nokta
+        dist = cv2.distanceTransform(zone.astype(np.uint8), cv2.DIST_L2, 3)[ys, xs]
+        cy = float((ys * dist).sum() / max(1e-6, dist.sum()))
+    else:
+        cy = 0.4 * float(ys.mean()) + 0.6 * min(max(bcy, ys.min()), ys.max())
     res = fit_zone(text, path, weight, zone, cy, max_size, min_readable)
-    if True:                                          # dikenli/çizgili/açık balonlar için oval sınır dene
+    if not regular or res is None:                    # dikenli/çizgili/açık balonlar için oval sınır dene
         oz = _oval_zone(zone, box)
         if oz is not None and oz.any():
             oys = np.nonzero(oz)[0]

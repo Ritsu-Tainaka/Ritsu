@@ -324,6 +324,13 @@ class Pipeline:
                 save_json(js(i), dict(summary="", new_terms=[], regions=regs, eco=True,
                                          dropped=list(ocr.last_dropped)))
                 self.log(f"  • Sayfa {i + 1}/{n}: OCR tamamlandı ({len(regs)} metin bölgesi bulundu).")
+                if not getattr(self, "_ocr_named", False):
+                    self._ocr_named = True
+                    from . import models as _m
+                    if _m._rapid and cfg.get("ocr_engine", "auto") != "tesseract":
+                        self.log(f"  (OCR motoru: RapidOCR, {_m.rapid_kind()})")
+                    elif _m._rapid is False or cfg.get("ocr_engine", "auto") == "tesseract":
+                        self.log("  (OCR motoru: Tesseract)")
             except ocr.OCRError as e:
                 raise GeminiError(str(e), permanent=True)
             except Exception as e:
