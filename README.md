@@ -87,8 +87,3 @@ ertesi gün "Çeviriyi başlat" ile kaldığı yerden devam eder.
 
 ## Kaynak formatları
 Klasör (PNG/JPG/WEBP), **PDF** ve **CBZ/ZIP** desteklenir. RAR tabanlı **.cbr** desteklenmez (7-Zip ile .cbz'ye çevir).
-
-## Sürüm sabitleme (EXE / "numpy C-extensions failed" hatası)
-requirements.txt eski/orta PC'lerde ve PyInstaller'da sorunsuz çalışan sürümlere sabitlendi.
-Eski `.venv` klasörünü silip `build_exe.bat`'ı yeniden çalıştır.
-Arayüzde beklenmeyen bir hata olursa pencerede gösterilir ve `%APPDATA%\MangaTranslator\hata.log` dosyasına yazılır.
